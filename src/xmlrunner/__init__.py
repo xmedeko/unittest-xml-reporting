@@ -27,12 +27,19 @@ except ImportError:
 # Allow version to be detected at runtime.
 from .version import __version__
 
-def to_unicode(data):
+
+def to_unicode(data, decode=None):
+    if isinstance(data, Exception):
+        data = data.message
+    if decode is not None:
+        data = data.decode(decode)
+    data = six.text_type(data)
     if six.PY2:
-        return six.text_type(data).encode('utf-8')
+        return data.encode('utf-8')
     else:
         # default encoding is UTF-8
-        return six.text_type(data)
+        return data
+
 
 class _DelegateIO(object):
     """
@@ -127,12 +134,20 @@ class _XMLTestResult(_TextTestResult):
     Used by XMLTestRunner.
     """
     def __init__(self, stream=sys.stderr, descriptions=1, verbosity=1,
-                 elapsed_times=True, properties=None):
+                 elapsed_times=True, properties=None, input_encoding=None):
         _TextTestResult.__init__(self, stream, descriptions, verbosity)
         self.successes = []
         self.callback = None
         self.elapsed_times = elapsed_times
         self.properties = None # junit testsuite properties
+
+        if input_encoding is not None:
+            def custom_to_unicode(data):
+                # could use functools.partial
+                return to_unicode(data, decode=input_encoding)
+            self._to_unicode = custom_to_unicode
+        else:
+            self._to_unicode = to_unicode
 
     def _prepare_callback(self, test_info, target_list, verbose_str,
                           short_str):
@@ -332,7 +347,7 @@ class _XMLTestResult(_TextTestResult):
     _createCDATAsections = staticmethod(_createCDATAsections)
 
 
-    def _report_testcase(suite_name, test_result, xml_testsuite, xml_document):
+    def _report_testcase(suite_name, test_result, xml_testsuite, xml_document, to_unicode):
         """
         Appends a testcase section to the XML document.
         """
@@ -379,7 +394,7 @@ class _XMLTestResult(_TextTestResult):
                 suite, test_runner.outsuffix, tests, doc, self.properties
             )
             for test in tests:
-                _XMLTestResult._report_testcase(suite, test, testsuite, doc)
+                _XMLTestResult._report_testcase(suite, test, testsuite, doc, self._to_unicode)
             xml_content = doc.toprettyxml(indent='\t', encoding=test_runner.encoding)
 
             if isinstance(test_runner.output, six.string_types):
@@ -404,12 +419,13 @@ class XMLTestRunner(TextTestRunner):
     """
     def __init__(self, output='.', outsuffix=None, stream=sys.stderr,
                  descriptions=True, verbosity=1, elapsed_times=True,
-                 failfast=False, encoding=None):
+                 failfast=False, encoding=None, input_encoding=None):
         TextTestRunner.__init__(self, stream, descriptions, verbosity,
                                 failfast=failfast)
         self.verbosity = verbosity
         self.output = output
         self.encoding = encoding
+        self.input_encoding = input_encoding
         if outsuffix:
             self.outsuffix = outsuffix
         else:
@@ -422,7 +438,8 @@ class XMLTestRunner(TextTestRunner):
         information about the executed tests.
         """
         return _XMLTestResult(
-            self.stream, self.descriptions, self.verbosity, self.elapsed_times
+            self.stream, self.descriptions, self.verbosity, self.elapsed_times,
+            input_encoding=self.input_encoding
         )
 
     def _patch_standard_output(self):
